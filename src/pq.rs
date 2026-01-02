@@ -1,20 +1,18 @@
 use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
-use base64::prelude::{Engine as _, BASE64_STANDARD};
+use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
 use bech32::{self, FromBase32, ToBase32, Variant};
 use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
-use libcrux_hkdf::{expand, extract, Algorithm};
 use pq_xwing_kem::xwing768x25519::{Ciphertext, DecapsulationKey, EncapsulationKey};
 use rand::{rngs::OsRng, TryRngCore};
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use zeroize::Zeroize;
 
-// use crate::InfallibleOsRng;
+use crate::hpke;
 
 const STANZA_TAG: &str = "mlkem768x25519"; // From plugin/age-go
 const PQ_LABEL: &[u8] = b"age-encryption.org/mlkem768x25519"; // From plugin/age-go
-const SUITE_ID: &[u8] = b"HPKE\x00\x64\x7a\x00\x01\x00\x01"; // From plugin (HPKE for MLKEM768-X25519)
 
 pub struct HybridRecipient {
     pub_key: EncapsulationKey,
@@ -84,24 +82,11 @@ impl AgeRecipient for HybridRecipient {
             ))
         })?;
 
-        let mut prk = [0u8; 32];
-        extract(Algorithm::Sha256, &mut prk, &ss, SUITE_ID).map_err(|_| {
-            age::EncryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "HKDF extract failed",
-            ))
-        })?;
-        let mut aead_key_bytes = [0u8; 32];
-        expand(Algorithm::Sha256, &mut aead_key_bytes, &prk, PQ_LABEL).map_err(|_| {
-            age::EncryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "HKDF expand failed",
-            ))
-        })?;
+        let (mut aead_key_bytes, base_nonce) = hpke::derive_key_and_nonce(&ss, PQ_LABEL);
+        let nonce_bytes = hpke::compute_nonce(&base_nonce, 0);
+        let nonce = Nonce::from(nonce_bytes);
         let aead_key = Key::from(aead_key_bytes);
         aead_key_bytes.zeroize();
-
-        let nonce = Nonce::from([0u8; 12]);
 
         let aead = ChaCha20Poly1305::new(&aead_key);
         let wrapped = aead
@@ -113,7 +98,7 @@ impl AgeRecipient for HybridRecipient {
                 ))
             })?;
 
-        let ct_base64 = BASE64_STANDARD.encode(&ct.to_bytes());
+        let ct_base64 = BASE64_STANDARD_NO_PAD.encode(&ct.to_bytes());
         let stanza = Stanza {
             tag: STANZA_TAG.to_string(),
             args: vec![ct_base64],
@@ -178,20 +163,17 @@ impl AgeIdentity for HybridIdentity {
             return None;
         }
         // Decode base64 ct
-        let ct_bytes = BASE64_STANDARD.decode(&stanza.args[0]).ok()?;
+        let ct_bytes = BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]).ok()?;
         let ct = Ciphertext::try_from(&ct_bytes[..]).ok()?;
         // Decapsulate
         let sk = DecapsulationKey::from_seed(self.seed.expose_secret());
         let mut ss = sk.decapsulate(&ct).ok()?;
         // Derive AEAD key
-        let mut prk = [0u8; 32];
-        extract(Algorithm::Sha256, &mut prk, &ss, SUITE_ID).ok()?;
-        let mut aead_key_bytes = [0u8; 32];
-        expand(Algorithm::Sha256, &mut aead_key_bytes, &prk, PQ_LABEL).ok()?;
+        let (mut aead_key_bytes, base_nonce) = hpke::derive_key_and_nonce(&ss, PQ_LABEL);
+        let nonce_bytes = hpke::compute_nonce(&base_nonce, 0);
+        let nonce = Nonce::from(nonce_bytes);
         let aead_key = Key::from(aead_key_bytes);
         aead_key_bytes.zeroize();
-        // Zero nonce
-        let nonce = Nonce::from([0u8; 12]);
         // Decrypt
         let aead = ChaCha20Poly1305::new(&aead_key);
         let decrypted = aead.decrypt(&nonce, &*stanza.body).ok()?;

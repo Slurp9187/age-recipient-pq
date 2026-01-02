@@ -1,3 +1,5 @@
+pub mod hpke;
+
 pub mod pq;
 pub use pq::{HybridIdentity, HybridRecipient};
 
