@@ -1,6 +1,6 @@
 use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
-use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
+use base64::prelude::{Engine as _, BASE64_STANDARD};
 use bech32::{self, FromBase32, ToBase32, Variant};
 use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
 use libcrux_hkdf::{expand, extract, Algorithm};
@@ -101,11 +101,7 @@ impl AgeRecipient for HybridRecipient {
         let aead_key = Key::from(aead_key_bytes);
         aead_key_bytes.zeroize();
 
-        let mut nonce_bytes = [0u8; 12];
-        OsRng
-            .try_fill_bytes(&mut nonce_bytes)
-            .expect("Failed to generate nonce");
-        let nonce = Nonce::from(nonce_bytes);
+        let nonce = Nonce::from([0u8; 12]);
 
         let aead = ChaCha20Poly1305::new(&aead_key);
         let wrapped = aead
@@ -117,7 +113,7 @@ impl AgeRecipient for HybridRecipient {
                 ))
             })?;
 
-        let ct_base64 = BASE64_STANDARD_NO_PAD.encode(&ct.to_bytes());
+        let ct_base64 = BASE64_STANDARD.encode(&ct.to_bytes());
         let stanza = Stanza {
             tag: STANZA_TAG.to_string(),
             args: vec![ct_base64],
@@ -139,7 +135,7 @@ impl HybridIdentity {
         let (hrp, data, _) = bech32::decode(s).map_err(|e| {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        if hrp != "AGE-SECRET-KEY-PQ-" {
+        if hrp != "age-secret-key-pq-" {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid HRF",
@@ -164,7 +160,7 @@ impl HybridIdentity {
 
     pub fn to_string(&self) -> String {
         bech32::encode(
-            "AGE-SECRET-KEY-PQ-",
+            "age-secret-key-pq-",
             self.seed.expose_secret().to_base32(),
             Variant::Bech32,
         )
@@ -182,7 +178,7 @@ impl AgeIdentity for HybridIdentity {
             return None;
         }
         // Decode base64 ct
-        let ct_bytes = BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]).ok()?;
+        let ct_bytes = BASE64_STANDARD.decode(&stanza.args[0]).ok()?;
         let ct = Ciphertext::try_from(&ct_bytes[..]).ok()?;
         // Decapsulate
         let sk = DecapsulationKey::from_seed(self.seed.expose_secret());
