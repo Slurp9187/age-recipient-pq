@@ -62,6 +62,8 @@ dependencies = [
  "chacha20poly1305",
  "libcrux-hkdf",
  "pq-xwing-kem",
+ "rand 0.9.2",
+ "rand_core 0.9.3",
  "zeroize",
 ]
 
@@ -943,9 +945,10 @@ dependencies = [
 [[package]]
 name = "pq-xwing-kem"
 version = "0.1.0"
-source = "git+https://github.com/Slurp9187/pq-xwing-kem#1182243478747be6a58ba733ed2361e59744a9a9"
+source = "git+https://github.com/Slurp9187/pq-xwing-kem?branch=main#c45443eb2b3b232e4b624a490f304525e4d683d6"
 dependencies = [
  "libcrux-ml-kem",
+ "rand 0.9.2",
  "rand_core 0.9.3",
  "sha3",
  "thiserror 2.0.17",

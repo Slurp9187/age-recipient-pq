@@ -5,10 +5,12 @@ use bech32::{self, FromBase32, ToBase32, Variant};
 use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
 use libcrux_hkdf::{expand, extract, Algorithm};
 use pq_xwing_kem::xwing768x25519::{Ciphertext, DecapsulationKey, EncapsulationKey};
-use rand_core::{OsRng, RngCore}; // RngCore for fill_bytes method
+use rand::{rngs::OsRng, TryRngCore};
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use zeroize::Zeroize;
+
+// use crate::InfallibleOsRng;
 
 const STANZA_TAG: &str = "mlkem768x25519"; // From plugin/age-go
 const PQ_LABEL: &[u8] = b"age-encryption.org/mlkem768x25519"; // From plugin/age-go
@@ -21,7 +23,9 @@ pub struct HybridRecipient {
 impl HybridRecipient {
     pub fn generate() -> (Self, HybridIdentity) {
         let mut seed = [0u8; 32];
-        OsRng.fill_bytes(&mut seed);
+        OsRng
+            .try_fill_bytes(&mut seed)
+            .expect("Failed to generate random seed");
         let sk = DecapsulationKey::from_seed(&seed);
         let pk = sk.encapsulation_key().expect("Key generation failed");
         (
@@ -98,7 +102,9 @@ impl AgeRecipient for HybridRecipient {
         aead_key_bytes.zeroize();
 
         let mut nonce_bytes = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce_bytes);
+        OsRng
+            .try_fill_bytes(&mut nonce_bytes)
+            .expect("Failed to generate nonce");
         let nonce = Nonce::from(nonce_bytes);
 
         let aead = ChaCha20Poly1305::new(&aead_key);

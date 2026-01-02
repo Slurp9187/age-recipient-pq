@@ -11,12 +11,14 @@ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(fuzzing)'] }
 [dependencies]
 age = { path = "../age/age-rs/age" }
 age-core = { path = "../age/age-rs/age-core" }
-pq-xwing-kem = { git = "https://github.com/Slurp9187/pq-xwing-kem" }
+pq-xwing-kem = { git = "https://github.com/Slurp9187/pq-xwing-kem", branch = "main" }
 libcrux-hkdf = "0.0.4"
 chacha20poly1305 = "0.10"
 base64 = "0.22"
 zeroize = "1.8"
 bech32 = "0.9"
+rand = {version = "0.9", features = ["std", "os_rng"]}
+rand_core = {version = "0.9", features = ["std", "os_rng"]}
 # rand_core = { version = "0.9", features = ["std", "os_rng"] }
 # rand_core = { version = "0.6.4", features = ["std"] }  # Downgrade; "std" enables OsRng
-# (Add others as needed, e.g., time for keygen timestamps if desired)
+# rand_core_compat = { version = "0.1", features = ["rand_core_0_5", "rand_core_0_6", "rand_core_0_9", "std"] }
