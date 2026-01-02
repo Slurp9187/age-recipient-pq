@@ -156,33 +156,90 @@ impl HybridIdentity {
 
 impl AgeIdentity for HybridIdentity {
     fn unwrap_stanza(&self, stanza: &Stanza) -> Option<Result<FileKey, age::DecryptError>> {
+        println!("Starting unwrap_stanza for tag: {}", stanza.tag);
         if stanza.tag != STANZA_TAG {
+            println!("Tag mismatch: expected {}, got {}", STANZA_TAG, stanza.tag);
             return None;
         }
+        println!("Tag ok");
         if stanza.args.len() != 1 {
+            println!("Args len mismatch: expected 1, got {}", stanza.args.len());
             return None;
         }
+        println!("Args ok");
         // Decode base64 ct
-        let ct_bytes = BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]).ok()?;
-        let ct = Ciphertext::try_from(&ct_bytes[..]).ok()?;
+        let ct_bytes = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("Base64 decode failed: {:?}", e);
+                return None;
+            }
+        };
+        println!("Base64 decode ok, ct_bytes len: {}", ct_bytes.len());
+        let ct = match Ciphertext::try_from(&ct_bytes[..]) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("Ciphertext try_from failed: {:?}", e);
+                return None;
+            }
+        };
+        println!("Ciphertext ok");
         // Decapsulate
         let sk = DecapsulationKey::from_seed(self.seed.expose_secret());
-        let mut ss = sk.decapsulate(&ct).ok()?;
+        let mut ss = match sk.decapsulate(&ct) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("Decapsulate failed: {:?}", e);
+                return None;
+            }
+        };
+        println!(
+            "Decapsulate ok, ss len: {}, ss starts with: {:?}",
+            ss.len(),
+            &ss[0..std::cmp::min(16, ss.len())]
+        );
+        println!("SS hash: {:?}", ss);
         // Derive AEAD key
         let (mut aead_key_bytes, base_nonce) = hpke::derive_key_and_nonce(&ss, PQ_LABEL);
         let nonce_bytes = hpke::compute_nonce(&base_nonce, 0);
         let nonce = Nonce::from(nonce_bytes);
         let aead_key = Key::from(aead_key_bytes);
+        println!(
+            "Key derivation ok, aead_key starts with: {:?}",
+            &aead_key_bytes[0..4]
+        );
         aead_key_bytes.zeroize();
         // Decrypt
         let aead = ChaCha20Poly1305::new(&aead_key);
-        let decrypted = aead.decrypt(&nonce, &*stanza.body).ok()?;
+        let decrypted = match aead.decrypt(&nonce, &*stanza.body) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("AEAD decrypt failed: {:?}", e);
+                println!(
+                    "stanza.body len: {}, nonce: {:?}",
+                    stanza.body.len(),
+                    &nonce_bytes[0..12]
+                );
+                println!("Expected decrypted len 16, but AEAD failed");
+                return None;
+            }
+        };
+        println!("Decrypt ok, decrypted len: {}", decrypted.len());
         if decrypted.len() != 16 {
+            println!(
+                "Decrypted len mismatch: got {}, expected 16",
+                decrypted.len()
+            );
             return None;
         }
-        let decrypted_array: [u8; 16] = decrypted.try_into().ok()?;
+        println!("Len check ok");
+        let decrypted_array: [u8; 16] = decrypted.try_into().unwrap_or_else(|_| {
+            println!("try_into failed for decrypted_array");
+            [0u8; 16]
+        });
         let file_key = FileKey::new(Box::new(decrypted_array));
         ss.zeroize();
+        println!("File key created ok");
         Some(Ok(file_key))
     }
 
