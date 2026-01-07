@@ -1,5 +1,5 @@
 [package]
-name = "age-pq-native-rs"
+name = "age-native-pq"
 version = "0.1.0"
 edition = "2021"
 description = "Native Rust implementation of age's post-quantum recipient, compatible with age CLI PQ encryption"
