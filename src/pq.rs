@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use zeroize::Zeroize;
 
-use crate::hpke_util::{
+use crate::hpke_pq::{
     compute_nonce, derive_key_and_nonce, map_hpke_decrypt_error, map_hpke_error,
 };
 

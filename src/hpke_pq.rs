@@ -1,4 +1,4 @@
-// src/hpke_util.rs
+// src/hpke_pq.rs
 
 //! Age-specific HPKE utilities using pq_xwing_hpke primitives.
 //! Hardcoded for the post-quantum suite: XWing768x25519 (KEM ID 0x647a),

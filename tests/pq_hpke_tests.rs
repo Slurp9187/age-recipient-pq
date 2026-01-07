@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use age_xwing::hpke_util::*;
+    use age_xwing::hpke_pq::*;
 
     #[test]
     fn test_suite_id_matches_go() {
