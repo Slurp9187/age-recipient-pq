@@ -1,5 +1,5 @@
 use age::{Decryptor, Identity};
-use age_xwing::pq::HybridIdentity;
+use age_pq_native_rs::pq::HybridIdentity;
 use std::fs;
 use std::io::Read;
 

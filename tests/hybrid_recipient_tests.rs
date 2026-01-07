@@ -1,5 +1,5 @@
 use age::{secrecy::ExposeSecret, Encryptor, Recipient};
-use age_xwing::pq::{HybridIdentity, HybridRecipient};
+use age_pq_native_rs::pq::{HybridIdentity, HybridRecipient};
 use std::io::{Read, Seek, Write};
 use tempfile::NamedTempFile;
 

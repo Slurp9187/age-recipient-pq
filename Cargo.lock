@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "age-xwing"
+name = "age-pq-native-rs"
 version = "0.1.0"
 dependencies = [
  "age",

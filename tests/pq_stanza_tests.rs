@@ -12,7 +12,7 @@
 
 use age::{secrecy::ExposeSecret, Decryptor, Encryptor, Identity, Recipient};
 use age_core::format::Stanza;
-use age_xwing::pq::HybridRecipient;
+use age_pq_native_rs::pq::HybridRecipient;
 use std::io::{Read, Write};
 
 #[test]

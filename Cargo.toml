@@ -1,8 +1,8 @@
 [package]
-name = "age-xwing"
+name = "age-pq-native-rs"
 version = "0.1.0"
 edition = "2021"
-description = "Post-quantum extension for the age encryption library, with HPKE from age-xwing-plugin"
+description = "Native Rust implementation of age's post-quantum recipient, compatible with age CLI PQ encryption"
 license = "Apache-2.0 OR MIT"
 
 [lints.rust]
