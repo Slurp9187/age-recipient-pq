@@ -92,7 +92,7 @@ fn hybrid_recipient_key_generation_and_serialization() {
     let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     let pub_str = recipient.to_string();
-    assert!(pub_str.starts_with("age1pq"));
+    assert!(pub_str.starts_with("age1pq1"));
     assert!(pub_str.len() > 100); // Long PQ keys
 
     let priv_str = identity.to_string();

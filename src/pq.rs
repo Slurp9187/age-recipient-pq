@@ -14,7 +14,6 @@ use pq_xwing_hpke::{
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use std::str::FromStr;
-use zeroize::Zeroize;
 
 const STANZA_TAG: &str = "mlkem768x25519"; // From plugin/age-go
 const PQ_LABEL: &[u8] = b"age-encryption.org/mlkem768x25519"; // From plugin/age-go
@@ -45,22 +44,22 @@ impl HybridRecipient {
     }
 
     pub fn parse(s: &str) -> Result<Self, age::EncryptError> {
-        let (hrp, data) = bech32::decode(s).map_err(|e| {
-            age::EncryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-        })?;
-        if hrp.as_str() != "age1pq1" {
+        if !s.starts_with("age1pq1") {
             return Err(age::EncryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Invalid HRP",
+                "Invalid recipient format",
             )));
         }
-        Ok(Self { pub_key: data })
+        let base64_part = &s[7..];
+        let pub_key = BASE64_STANDARD_NO_PAD.decode(base64_part).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?;
+        Ok(Self { pub_key })
     }
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        let hrp = Hrp::parse("age1pq1").unwrap();
-        bech32::encode::<bech32::Bech32>(hrp, &self.pub_key).expect("Encoding failed")
+        format!("age1pq1{}", BASE64_STANDARD_NO_PAD.encode(&self.pub_key))
     }
 }
 
@@ -162,7 +161,10 @@ impl FromStr for HybridIdentity {
 
 impl AgeIdentity for HybridIdentity {
     fn unwrap_stanza(&self, stanza: &Stanza) -> Option<Result<FileKey, age::DecryptError>> {
-        if stanza.tag != STANZA_TAG || stanza.args.len() != 2 || stanza.args[0] != STANZA_TAG {
+        if stanza.tag != STANZA_TAG {
+            return None;
+        }
+        if stanza.args.len() != 2 || stanza.args[0] != STANZA_TAG {
             return None;
         }
         let enc: Vec<u8> = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[1]) {
