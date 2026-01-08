@@ -19,7 +19,7 @@ use std::io::{Read, Write};
 fn pq_stanza_unwrap_simulated_age_go_file_key() {
     let known_file_key: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
     let file_key = age_core::format::FileKey::new(Box::new(known_file_key));
-    let (recipient, identity) = HybridRecipient::generate();
+    let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     // Generate stanza using Rust impl (simulates age-go wrap_file_key logic)
     let (stanzas, _) = recipient.wrap_file_key(&file_key).unwrap();
@@ -39,7 +39,7 @@ fn pq_stanza_unwrap_simulated_age_go_file_key() {
 
 #[test]
 fn pq_stanza_unwrap_invalid_tag() {
-    let (_, identity) = HybridRecipient::generate();
+    let (_, identity) = HybridRecipient::generate().unwrap();
     let invalid_stanza = Stanza {
         tag: "invalid_tag".to_string(),
         args: vec![],
@@ -52,7 +52,7 @@ fn pq_stanza_unwrap_invalid_tag() {
 
 #[test]
 fn pq_stanza_unwrap_malformed_ciphertext() {
-    let (_, identity) = HybridRecipient::generate();
+    let (_, identity) = HybridRecipient::generate().unwrap();
     let malformed_stanza = Stanza {
         tag: "mlkem768x25519".to_string(),
         args: vec!["invalid_base64".to_string()],
@@ -78,7 +78,7 @@ fn pq_stanza_unwrap_malformed_ciphertext() {
 
 #[test]
 fn pq_multiple_recipient_encryption_roundtrip() {
-    let (recipient1, identity1) = HybridRecipient::generate();
+    let (recipient1, identity1) = HybridRecipient::generate().unwrap();
     let plaintext = b"Multi-recipient test";
 
     // Encrypt to recipient1

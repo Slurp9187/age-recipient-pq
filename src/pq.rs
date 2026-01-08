@@ -4,75 +4,63 @@ use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
 use age_core::secrecy::SecretString;
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
-use bech32::{self, FromBase32, ToBase32, Variant};
-use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
-use pq_xwing_hpke::xwing768x25519::{Ciphertext, DecapsulationKey, EncapsulationKey};
-use rand::{rngs::OsRng, TryRngCore};
+use bech32::Hrp;
+use pq_xwing_hpke::{aead::new_aead, kdf::new_kdf};
+use pq_xwing_hpke::{
+    hpke::{new_sender, open},
+    kem::{Kem, XWing768X25519},
+};
+
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use std::str::FromStr;
 use zeroize::Zeroize;
 
-use crate::hpke_pq::{
-    compute_nonce, derive_key_and_nonce, map_hpke_decrypt_error, map_hpke_error,
-};
-
 const STANZA_TAG: &str = "mlkem768x25519"; // From plugin/age-go
 const PQ_LABEL: &[u8] = b"age-encryption.org/mlkem768x25519"; // From plugin/age-go
 
+const KDF_ID: u16 = 0x0001; // HKDF-SHA256
+const AEAD_ID: u16 = 0x0003; // ChaCha20Poly1305
+
 pub struct HybridRecipient {
-    pub_key: EncapsulationKey,
+    pub_key: Vec<u8>,
 }
 
 impl HybridRecipient {
-    pub fn generate() -> (Self, HybridIdentity) {
-        let mut seed = [0u8; 32];
-        OsRng
-            .try_fill_bytes(&mut seed)
-            .expect("Failed to generate random seed");
-        let sk = DecapsulationKey::from_seed(&seed);
-        let pk = sk.encapsulation_key().expect("Key generation failed");
-        (
-            Self { pub_key: pk },
+    pub fn generate() -> Result<(Self, HybridIdentity), Box<dyn std::error::Error>> {
+        let kem = XWing768X25519;
+        let sk = kem.generate_key()?;
+        let pk = sk.public_key();
+        let seed_bytes = sk.bytes()?;
+        let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| "Invalid seed length")?;
+        let pub_key_bytes = pk.bytes();
+        Ok((
+            Self {
+                pub_key: pub_key_bytes,
+            },
             HybridIdentity {
                 seed: SecretBox::new(Box::new(seed)),
             },
-        )
+        ))
     }
 
     pub fn parse(s: &str) -> Result<Self, age::EncryptError> {
-        let (hrp, data, _) = bech32::decode(s).map_err(|e| {
+        let (hrp, data) = bech32::decode(s).map_err(|e| {
             age::EncryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        if hrp != "age1pq" {
+        if hrp.as_str() != "age1pq1" {
             return Err(age::EncryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Invalid HRF",
+                "Invalid HRP",
             )));
         }
-        let bytes = Vec::<u8>::from_base32(&data).map_err(|_| {
-            age::EncryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid base32",
-            ))
-        })?;
-        let pub_key = EncapsulationKey::try_from(&bytes[..]).map_err(|_| {
-            age::EncryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid key",
-            ))
-        })?;
-        Ok(Self { pub_key })
+        Ok(Self { pub_key: data })
     }
 
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        bech32::encode(
-            "age1pq",
-            self.pub_key.to_bytes().to_base32(),
-            Variant::Bech32,
-        )
-        .expect("Encoding failed")
+        let hrp = Hrp::parse("age1pq1").unwrap();
+        bech32::encode::<bech32::Bech32>(hrp, &self.pub_key).expect("Encoding failed")
     }
 }
 
@@ -89,31 +77,31 @@ impl AgeRecipient for HybridRecipient {
         &self,
         file_key: &FileKey,
     ) -> Result<(Vec<Stanza>, HashSet<String>), age::EncryptError> {
-        let mut rng = OsRng;
-        let (ct, mut ss) = self
-            .pub_key
-            .encapsulate(&mut rng)
-            .map_err(|_| age::EncryptError::Io(std::io::Error::other("Encapsulation failed")))?;
-
-        let (mut aead_key_bytes, base_nonce) =
-            derive_key_and_nonce(&ss, PQ_LABEL).map_err(map_hpke_error)?;
-        let nonce_bytes = compute_nonce(&base_nonce, 0u64);
-        let nonce = Nonce::from(nonce_bytes);
-        let aead_key = Key::from(aead_key_bytes);
-        aead_key_bytes.zeroize();
-
-        let aead = ChaCha20Poly1305::new(&aead_key);
-        let wrapped = aead
-            .encrypt(&nonce, file_key.expose_secret().as_slice())
-            .map_err(|_| age::EncryptError::Io(std::io::Error::other("Encryption failed")))?;
-
-        let ct_base64 = BASE64_STANDARD_NO_PAD.encode(ct.to_bytes());
+        let kem = XWing768X25519;
+        let pk = kem.new_public_key(&self.pub_key).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::other(format!("Invalid pub key: {:?}", e)))
+        })?;
+        let kdf = new_kdf(KDF_ID).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::other(format!("KDF error: {:?}", e)))
+        })?;
+        let aead = new_aead(AEAD_ID).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::other(format!("AEAD error: {:?}", e)))
+        })?;
+        let (enc, mut sender) = new_sender(pk, kdf, aead, PQ_LABEL).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::other(format!(
+                "HPKE new_sender error: {:?}",
+                e
+            )))
+        })?;
+        let wrapped = sender.seal(&[], file_key.expose_secret()).map_err(|e| {
+            age::EncryptError::Io(std::io::Error::other(format!("HPKE seal error: {:?}", e)))
+        })?;
+        let base64_enc = BASE64_STANDARD_NO_PAD.encode(&enc);
         let stanza = Stanza {
             tag: STANZA_TAG.to_string(),
-            args: vec![ct_base64],
+            args: vec![STANZA_TAG.to_string(), base64_enc],
             body: wrapped,
         };
-        ss.zeroize();
         let mut labels = HashSet::new();
         labels.insert("postquantum".to_string());
         Ok((vec![stanza], labels))
@@ -121,27 +109,21 @@ impl AgeRecipient for HybridRecipient {
 }
 
 pub struct HybridIdentity {
-    seed: secrecy::SecretBox<[u8; 32]>,
+    seed: SecretBox<[u8; 32]>,
 }
 
 impl HybridIdentity {
     pub fn parse(s: &str) -> Result<Self, age::DecryptError> {
-        let (hrp, data, _) = bech32::decode(s).map_err(|e| {
+        let (hrp, data) = bech32::decode(s).map_err(|e| {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        if hrp != "age-secret-key-pq-" {
+        if hrp.as_str() != "AGE-SECRET-KEY-PQ-1" {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Invalid HRF",
+                "Invalid HRP",
             )));
         }
-        let bytes = Vec::<u8>::from_base32(&data).map_err(|_| {
-            age::DecryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid base32",
-            ))
-        })?;
-        let seed: [u8; 32] = bytes.try_into().map_err(|_| {
+        let seed: [u8; 32] = data.try_into().map_err(|_| {
             age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid seed length",
@@ -153,15 +135,20 @@ impl HybridIdentity {
     }
 
     pub fn to_string(&self) -> SecretString {
-        let sk_base32 = self.seed.expose_secret().to_base32();
-        let mut encoded = bech32::encode("age-secret-key-pq-", sk_base32, Variant::Bech32)
+        let hrp = Hrp::parse("AGE-SECRET-KEY-PQ-1").unwrap();
+        let encoded = bech32::encode::<bech32::Bech32>(hrp, self.seed.expose_secret())
             .expect("Encoding failed");
-        let ret = SecretString::from(encoded.to_uppercase());
+        SecretString::from(encoded.to_uppercase())
+    }
 
-        // Clear intermediates
-        encoded.zeroize();
-
-        ret
+    pub fn to_public(&self) -> Result<HybridRecipient, Box<dyn std::error::Error>> {
+        let kem = XWing768X25519;
+        let sk = kem.new_private_key(self.seed.expose_secret())?;
+        let pk = sk.public_key();
+        let pub_key_bytes = pk.bytes();
+        Ok(HybridRecipient {
+            pub_key: pub_key_bytes,
+        })
     }
 }
 
@@ -175,97 +162,73 @@ impl FromStr for HybridIdentity {
 
 impl AgeIdentity for HybridIdentity {
     fn unwrap_stanza(&self, stanza: &Stanza) -> Option<Result<FileKey, age::DecryptError>> {
-        println!("Starting unwrap_stanza for tag: {}", stanza.tag);
-        if stanza.tag != STANZA_TAG {
-            println!("Tag mismatch: expected {}, got {}", STANZA_TAG, stanza.tag);
+        if stanza.tag != STANZA_TAG || stanza.args.len() != 2 || stanza.args[0] != STANZA_TAG {
             return None;
         }
-        println!("Tag ok");
-        if stanza.args.len() != 1 {
-            println!("Args len mismatch: expected 1, got {}", stanza.args.len());
-            return None;
-        }
-        println!("Args ok");
-        // Decode base64 ct
-        let ct_bytes = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]) {
+        let enc: Vec<u8> = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[1]) {
             Ok(b) => b,
-            Err(e) => {
-                println!("Base64 decode failed: {:?}", e);
-                return None;
-            }
+            Err(_) => return None,
         };
-        println!("Base64 decode ok, ct_bytes len: {}", ct_bytes.len());
-        let ct = match Ciphertext::try_from(&ct_bytes[..]) {
-            Ok(c) => c,
-            Err(e) => {
-                println!("Ciphertext try_from failed: {:?}", e);
-                return None;
-            }
-        };
-        println!("Ciphertext ok");
-        // Decapsulate
-        let sk = DecapsulationKey::from_seed(self.seed.expose_secret());
-        let mut ss = match sk.decapsulate(&ct) {
+        let kem = XWing768X25519;
+        let sk = match kem.new_private_key(self.seed.expose_secret()) {
             Ok(s) => s,
-            Err(e) => {
-                println!("Decapsulate failed: {:?}", e);
-                return None;
-            }
+            Err(_) => return None,
         };
-        println!(
-            "Decapsulate ok, ss len: {}, ss starts with: {:?}",
-            ss.len(),
-            &ss[0..std::cmp::min(16, ss.len())]
-        );
-        println!("SS hash: {:?}", ss);
-        // Derive AEAD key
-        let (mut aead_key_bytes, base_nonce) = match derive_key_and_nonce(&ss, PQ_LABEL) {
-            Ok(result) => result,
-            Err(e) => return Some(Err(map_hpke_decrypt_error(e))),
+        let kdf = match new_kdf(KDF_ID) {
+            Ok(k) => k,
+            Err(_) => return None,
         };
-        let nonce_bytes = compute_nonce(&base_nonce, 0u64);
-        let nonce = Nonce::from(nonce_bytes);
-        let aead_key = Key::from(aead_key_bytes);
-        println!(
-            "Key derivation ok, aead_key starts with: {:?}",
-            &aead_key_bytes[0..4]
-        );
-        aead_key_bytes.zeroize();
-        // Decrypt
-        let aead = ChaCha20Poly1305::new(&aead_key);
-        let decrypted = match aead.decrypt(&nonce, &*stanza.body) {
-            Ok(d) => d,
-            Err(e) => {
-                println!("AEAD decrypt failed: {:?}", e);
-                println!(
-                    "stanza.body len: {}, nonce: {:?}",
-                    stanza.body.len(),
-                    &nonce_bytes[0..12]
-                );
-                println!("Expected decrypted len 16, but AEAD failed");
-                return None;
-            }
+        let aead = match new_aead(AEAD_ID) {
+            Ok(a) => a,
+            Err(_) => return None,
         };
-        println!("Decrypt ok, decrypted len: {}", decrypted.len());
-        if decrypted.len() != 16 {
-            println!(
-                "Decrypted len mismatch: got {}, expected 16",
-                decrypted.len()
-            );
-            return None;
-        }
-        println!("Len check ok");
-        let decrypted_array: [u8; 16] = decrypted.try_into().unwrap_or_else(|_| {
-            println!("try_into failed for decrypted_array");
-            [0u8; 16]
-        });
-        let file_key = FileKey::new(Box::new(decrypted_array));
-        ss.zeroize();
-        println!("File key created ok");
+        let mut ct = enc;
+        ct.extend_from_slice(&stanza.body);
+        let file_key_bytes = match open(sk, kdf, aead, PQ_LABEL, &ct) {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
+        let file_key = match file_key_bytes.try_into() {
+            Ok(arr) => FileKey::new(Box::new(arr)),
+            Err(_) => return None,
+        };
         Some(Ok(file_key))
     }
 
     fn unwrap_stanzas(&self, stanzas: &[Stanza]) -> Option<Result<FileKey, age::DecryptError>> {
         stanzas.iter().find_map(|stanza| self.unwrap_stanza(stanza))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use age::{Identity, Recipient};
+    use age_core::format::FileKey;
+    use age_core::secrecy::ExposeSecret;
+    use pq_xwing_hpke::kem::Kem;
+    use proptest::prelude::*;
+    use secrecy::SecretBox;
+
+    use super::{HybridIdentity, HybridRecipient};
+
+    proptest! {
+        #[test]
+        fn wrap_and_unwrap(file_key_bytes in proptest::collection::vec(any::<u8>(), 16..=16)) {
+            let file_key = FileKey::new(Box::new(file_key_bytes.try_into().unwrap()));
+            let (recipient, identity) = HybridRecipient::generate().unwrap();
+
+            let res = recipient.wrap_file_key(&file_key);
+            prop_assert!(res.is_ok());
+            let (stanzas, labels) = res.unwrap();
+            prop_assert!(labels.contains("postquantum"));
+
+            let res = identity.unwrap_stanzas(&stanzas);
+            prop_assert!(res.is_some());
+            let res = res.unwrap();
+            prop_assert!(res.is_ok());
+            let unwrapped = res.unwrap();
+
+            prop_assert_eq!(unwrapped.expose_secret(), file_key.expose_secret());
+        }
     }
 }

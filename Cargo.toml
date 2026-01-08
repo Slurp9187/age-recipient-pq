@@ -12,11 +12,15 @@ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(fuzzing)'] }
 age = "0.11"
 age-core = "0.11"
 pq-xwing-hpke = { path = "../pq-xwing-hpke" }
-chacha20poly1305 = "0.10"
 base64 = "0.22"
+bech32 = "0.11.1"
+clap = { version = "4.5", features = ["derive"] }
+chacha20poly1305 = "0.10"
+rand = { version = "0.9", features = ["std", "os_rng"] }
+secrecy = "0.10.3"
+time = { version = "0.3", features = ["formatting"] }
 zeroize = "1.8"
-bech32 = "0.9"
-rand = {version = "0.9", features = ["std", "os_rng"]}
 
 [dev-dependencies]
-tempfile = "3.24.0"
+proptest = "1"
+tempfile = "3"

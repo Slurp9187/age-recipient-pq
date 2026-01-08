@@ -5,7 +5,7 @@ use tempfile::NamedTempFile;
 
 #[test]
 fn hybrid_recipient_keypair_generation_and_file_encryption() {
-    let (recipient, identity) = HybridRecipient::generate();
+    let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     // Save recipient to a temporary file
     let mut temp_recipient =
@@ -33,7 +33,7 @@ fn hybrid_recipient_keypair_generation_and_file_encryption() {
 
 #[test]
 fn hybrid_recipient_encrypt_decrypt_roundtrip() {
-    let (recipient, identity) = HybridRecipient::generate();
+    let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     let plaintext = b"This is a test message for age-xwing encryption.";
 
@@ -58,7 +58,7 @@ fn hybrid_recipient_encrypt_decrypt_roundtrip() {
 
 #[test]
 fn hybrid_recipient_file_encrypt_decrypt_roundtrip() {
-    let (recipient, identity) = HybridRecipient::generate();
+    let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     let plaintext = b"This is a test message for age-xwing encryption.";
 
@@ -89,7 +89,7 @@ fn hybrid_recipient_file_encrypt_decrypt_roundtrip() {
 
 #[test]
 fn hybrid_recipient_key_generation_and_serialization() {
-    let (recipient, identity) = HybridRecipient::generate();
+    let (recipient, identity) = HybridRecipient::generate().unwrap();
 
     let pub_str = recipient.to_string();
     assert!(pub_str.starts_with("age1pq"));
