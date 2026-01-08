@@ -43,6 +43,7 @@ impl HybridRecipient {
         ))
     }
 
+    // Official recipient format: "age1pq1" + base64(pub_key) (not bech32 due to large key size)
     pub fn parse(s: &str) -> Result<Self, age::EncryptError> {
         if !s.starts_with("age1pq1") {
             return Err(age::EncryptError::Io(std::io::Error::new(
@@ -113,10 +114,14 @@ pub struct HybridIdentity {
 
 impl HybridIdentity {
     pub fn parse(s: &str) -> Result<Self, age::DecryptError> {
+        // Official identity format: bech32-encoded with HRP "AGE-SECRET-KEY-PQ-", separator '1', data=seed
+        // String looks like "AGE-SECRET-KEY-PQ-1<data>"
+        // bech32::decode parses this into hrp="AGE-SECRET-KEY-PQ-" and data="<data>" (note: '1' is separator, not part of hrp)
         let (hrp, data) = bech32::decode(s).map_err(|e| {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        if hrp.as_str() != "AGE-SECRET-KEY-PQ-1" {
+        // Check hrp == "AGE-SECRET-KEY-PQ-" (no '1', as '1' is the bech32 separator)
+        if hrp.as_str() != "AGE-SECRET-KEY-PQ-" {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid HRP",
@@ -134,7 +139,8 @@ impl HybridIdentity {
     }
 
     pub fn to_string(&self) -> SecretString {
-        let hrp = Hrp::parse("AGE-SECRET-KEY-PQ-1").unwrap();
+        // Generate bech32 string with HRP "AGE-SECRET-KEY-PQ-" (separator '1' added by encode, so full string starts with "AGE-SECRET-KEY-PQ-1")
+        let hrp = Hrp::parse("AGE-SECRET-KEY-PQ-").unwrap();
         let encoded = bech32::encode::<bech32::Bech32>(hrp, self.seed.expose_secret())
             .expect("Encoding failed");
         SecretString::from(encoded.to_uppercase())
@@ -164,13 +170,25 @@ impl AgeIdentity for HybridIdentity {
         if stanza.tag != STANZA_TAG {
             return None;
         }
-        if stanza.args.len() != 2 || stanza.args[0] != STANZA_TAG {
+        let enc: Vec<u8>;
+        // Support both new official format (2 args: ["mlkem768x25519", base64(enc)])
+        // and legacy format (1 arg: [base64(enc)]) for backward compatibility with older age CLI files.
+        if stanza.args.len() == 2 && stanza.args[0] == STANZA_TAG {
+            // New format: tag confirmed in args[0], enc in args[1]
+            enc = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[1]) {
+                Ok(b) => b,
+                Err(_) => return None,
+            };
+        } else if stanza.args.len() == 1 {
+            // Legacy format: enc in args[0] (used in older PQ implementations)
+            enc = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]) {
+                Ok(b) => b,
+                Err(_) => return None,
+            };
+        } else {
+            // Invalid arg count
             return None;
         }
-        let enc: Vec<u8> = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[1]) {
-            Ok(b) => b,
-            Err(_) => return None,
-        };
         let kem = XWing768X25519;
         let sk = match kem.new_private_key(self.seed.expose_secret()) {
             Ok(s) => s,
@@ -207,11 +225,9 @@ pub(crate) mod tests {
     use age::{Identity, Recipient};
     use age_core::format::FileKey;
     use age_core::secrecy::ExposeSecret;
-    use pq_xwing_hpke::kem::Kem;
     use proptest::prelude::*;
-    use secrecy::SecretBox;
 
-    use super::{HybridIdentity, HybridRecipient};
+    use super::HybridRecipient;
 
     proptest! {
         #[test]
