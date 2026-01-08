@@ -45,8 +45,6 @@ let recipient = HybridRecipient::from_str("age1pq1...").unwrap();
 let identity = HybridIdentity::from_str("AGE-SECRET-KEY-PQ-1...").unwrap();
 ```
 
-See the [API documentation](https://docs.rs/age-recipient-pq) for detailed usage and examples.
-
 ## Security
 
 - Post-quantum security via ML-KEM-768 (NIST standardized).
