@@ -3,19 +3,23 @@ use age_recipient_pq::pq::HybridIdentity;
 use std::fs;
 use std::io::Read;
 
+const ENCRYPTED_FILE: &str = "tests/data/lorem.txt.age";
+const PLAINTEXT_FILE: &str = "tests/data/lorem.txt";
+const IDENTITY_FILE: &str = "tests/data/age_cli_pq_identity.key";
+
 #[test]
 fn test_decrypt_lorem_encrypted_with_age_cli() {
     // Read the encrypted file (lorem.txt.age from age-cli)
     let encrypted_data =
-        fs::read("tests/data/lorem.txt.age").expect("Failed to read tests/data/lorem.txt.age");
+        fs::read(ENCRYPTED_FILE).expect(&format!("Failed to read {}", ENCRYPTED_FILE));
 
     // Read the original plaintext for comparison
     let original_plaintext =
-        fs::read("tests/data/lorem.txt").expect("Failed to read tests/data/lorem.txt");
+        fs::read(PLAINTEXT_FILE).expect(&format!("Failed to read {}", PLAINTEXT_FILE));
 
-    // Read the secret key from age-cli (corresponds to age_go_recipient.key public key)
-    let mut identity_str = fs::read_to_string("tests/data/age_go_identity.key")
-        .expect("Failed to read tests/data/age_go_identity.key");
+    // Read the secret key from age-cli (corresponds to age_cli_pq_recipient.key public key)
+    let mut identity_str =
+        fs::read_to_string(IDENTITY_FILE).expect(&format!("Failed to read {}", IDENTITY_FILE));
     identity_str = identity_str.trim().to_string();
 
     // Parse the identity

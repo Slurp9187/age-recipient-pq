@@ -20,7 +20,3 @@ secrecy = "0.10"
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
-
-[[bin]]
-name = "create_encrypted"
-path = "src/create_encrypted.rs"
