@@ -22,8 +22,6 @@ Add the following to your `Cargo.toml`:
 age-recipient-pq = { git = "https://github.com/Slurp9187/age-recipient-pq" }
 ```
 
-Replace `"your-username"` with the actual GitHub username or repository URL.
-
 Then, run `cargo build` to include it.
 
 ## Usage
