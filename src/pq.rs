@@ -175,7 +175,7 @@ impl AgeRecipient for HybridRecipient {
         let base64_enc = BASE64_STANDARD_NO_PAD.encode(&enc);
         let stanza = Stanza {
             tag: STANZA_TAG.to_string(),
-            args: vec![STANZA_TAG.to_string(), base64_enc],
+            args: vec![base64_enc],
             body: wrapped,
         };
         let mut labels = HashSet::new();
