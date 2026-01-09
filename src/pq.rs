@@ -1,5 +1,3 @@
-// src/pq.rs
-
 use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
 use age_core::secrecy::SecretString;
