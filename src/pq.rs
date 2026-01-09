@@ -8,7 +8,7 @@ use bech32::Hrp;
 use pq_xwing_hpke::{aead::new_aead, kdf::new_kdf};
 use pq_xwing_hpke::{
     hpke::{new_sender, open},
-    kem::{Kem, XWing768X25519},
+    kem::{Kem, MlKem768X25519},
 };
 
 use secrecy::{ExposeSecret, SecretBox};
@@ -53,7 +53,7 @@ impl HybridRecipient {
     /// let (recipient, identity) = HybridRecipient::generate().unwrap();
     /// ```
     pub fn generate() -> Result<(Self, HybridIdentity), Box<dyn std::error::Error>> {
-        let kem = XWing768X25519;
+        let kem = MlKem768X25519;
         let sk = kem.generate_key()?;
         let pk = sk.public_key();
         let seed_bytes = sk.bytes()?;
@@ -153,7 +153,7 @@ impl AgeRecipient for HybridRecipient {
         &self,
         file_key: &FileKey,
     ) -> Result<(Vec<Stanza>, HashSet<String>), age::EncryptError> {
-        let kem = XWing768X25519;
+        let kem = MlKem768X25519;
         let pk = kem.new_public_key(&self.pub_key).map_err(|e| {
             age::EncryptError::Io(std::io::Error::other(format!("Invalid pub key: {:?}", e)))
         })?;
@@ -277,7 +277,7 @@ impl HybridIdentity {
     /// let recipient = identity.to_public().unwrap();
     /// ```
     pub fn to_public(&self) -> Result<HybridRecipient, Box<dyn std::error::Error>> {
-        let kem = XWing768X25519;
+        let kem = MlKem768X25519;
         let sk = kem.new_private_key(self.seed.expose_secret())?;
         let pk = sk.public_key();
         let pub_key_bytes = pk.bytes();
@@ -332,7 +332,7 @@ impl AgeIdentity for HybridIdentity {
             // Invalid arg count
             return None;
         }
-        let kem = XWing768X25519;
+        let kem = MlKem768X25519;
         let sk = match kem.new_private_key(self.seed.expose_secret()) {
             Ok(s) => s,
             Err(_) => return None,
