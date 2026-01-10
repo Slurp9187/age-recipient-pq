@@ -1063,6 +1063,7 @@ dependencies = [
 [[package]]
 name = "pq-xwing-hpke"
 version = "0.0.1"
+source = "git+https://github.com/Slurp9187/pq-xwing-hpke#a5fab9630e2602f7fe81c8dabe118b5d26bf98f6"
 dependencies = [
  "aead",
  "byteorder",
