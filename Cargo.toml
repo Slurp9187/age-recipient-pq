@@ -14,7 +14,8 @@ age = "0.11"
 age-core = "0.11"
 pq-xwing-hpke = { path = "../pq-xwing-hpke" }
 base64 = "0.22"
-bech32 = "0.11"
+# bech32 = "0.11"
+bech32 = "0.9"
 secrecy = "0.10"
 
 [dev-dependencies]

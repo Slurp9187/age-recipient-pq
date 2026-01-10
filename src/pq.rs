@@ -2,13 +2,13 @@ use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
 use age_core::secrecy::SecretString;
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
-use bech32::Hrp;
+use bech32::{Variant, ToBase32, FromBase32};
+
+use pq_xwing_hpke::kem::{Kem, MlKem768X25519};
 use pq_xwing_hpke::{aead::new_aead, kdf::new_kdf};
 use pq_xwing_hpke::{
     hpke::{new_sender, open},
-    kem::{Kem, MlKem768X25519},
 };
-
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -18,7 +18,6 @@ use std::str::FromStr;
 const STANZA_TAG: &str = "mlkem768x25519"; // From plugin/age-go
 /// The domain separation label for HPKE operations, matching the age-go plugin.
 const PQ_LABEL: &[u8] = b"age-encryption.org/mlkem768x25519"; // From plugin/age-go
-
 /// The KDF ID for HPKE, corresponding to HKDF-SHA256.
 const KDF_ID: u16 = 0x0001; // HKDF-SHA256
 /// The AEAD ID for HPKE, corresponding to ChaCha20Poly1305.
@@ -67,10 +66,10 @@ impl HybridRecipient {
         ))
     }
 
-    // Official recipient format: "age1pq1" + base64(pub_key) (not bech32 due to large key size)
+    // Official recipient format: bech32-encoded with HRP "age1pq" and data=pub_key
     /// Parses a hybrid recipient from its string representation.
     ///
-    /// The expected format is "age1pq1" followed by the base64-encoded public key.
+    /// The expected format is a Bech32-encoded string with HRP "age1pq" and the public key as data.
     ///
     /// # Arguments
     ///
@@ -103,7 +102,7 @@ impl HybridRecipient {
 
     /// Serializes the recipient to its canonical string format.
     ///
-    /// Returns a string in the form `age1pq1<base64-public-key>`.
+    /// Returns a Bech32-encoded string with HRP "age1pq" and the public key as data.
     ///
     /// # Examples
     ///
@@ -116,7 +115,12 @@ impl HybridRecipient {
     /// ```
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        format!("age1pq1{}", BASE64_STANDARD_NO_PAD.encode(&self.pub_key))
+        // Raw bytes → 5-bit data
+        let data5 = self.pub_key.to_base32();
+
+        // HRP = "age1pq" (lowercase, NO extra '1' — crate adds separator)
+        bech32::encode("age1pq", data5, Variant::Bech32)
+            .expect("Bech32 encoding never fails here")
     }
 }
 
@@ -125,7 +129,12 @@ impl FromStr for HybridRecipient {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::parse(s).map_err(|_| "failed to parse HybridRecipient")
+        let (hrp, data, _) = bech32::decode(s).map_err(|_| "failed to decode")?;
+        if hrp != "age1pq1" {
+            return Err("Invalid HRP");
+        }
+        let pub_key = Vec::<u8>::from_base32(&data).map_err(|_| "invalid base32 data")?;
+        Ok(Self { pub_key })
     }
 }
 
@@ -199,6 +208,7 @@ impl HybridIdentity {
     /// # Arguments
     ///
     /// * `s` - The string to parse.
+    /// Parses a string representation of a hybrid identity.
     ///
     /// # Errors
     ///
@@ -212,25 +222,32 @@ impl HybridIdentity {
     /// let identity = HybridIdentity::parse("AGE-SECRET-KEY-PQ-1...").unwrap();
     /// ```
     pub fn parse(s: &str) -> Result<Self, age::DecryptError> {
-        // Official identity format: bech32-encoded with HRP "AGE-SECRET-KEY-PQ-", separator '1', data=seed
-        // String looks like "AGE-SECRET-KEY-PQ-1<data>"
-        // bech32::decode parses this into hrp="AGE-SECRET-KEY-PQ-" and data="<data>" (note: '1' is separator, not part of hrp)
-        let (hrp, data) = bech32::decode(s).map_err(|e| {
+        let (hrp, data, _) = bech32::decode(s).map_err(|e| {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
-        // Check hrp == "AGE-SECRET-KEY-PQ-" (no '1', as '1' is the bech32 separator)
-        if hrp.as_str() != "AGE-SECRET-KEY-PQ-" {
+
+        // Case-insensitive comparison (decode may normalize to lowercase)
+        if hrp.to_ascii_lowercase() != "age-secret-key-pq-" {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Invalid HRP",
+                format!("Invalid HRP: {}", hrp),
             )));
         }
-        let seed: [u8; 32] = data.try_into().map_err(|_| {
+
+        let data_u8: Vec<u8> = Vec::from_base32(&data).map_err(|_| {
+            age::DecryptError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid base32 data",
+            ))
+        })?;
+
+        let seed: [u8; 32] = data_u8.try_into().map_err(|_| {
             age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid seed length",
             ))
         })?;
+
         Ok(Self {
             seed: SecretBox::new(Box::new(seed)),
         })
@@ -251,10 +268,9 @@ impl HybridIdentity {
     /// let str = secret_str.expose_secret().clone();
     /// ```
     pub fn to_string(&self) -> SecretString {
-        // Generate bech32 string with HRP "AGE-SECRET-KEY-PQ-" (separator '1' added by encode, so full string starts with "AGE-SECRET-KEY-PQ-1")
-        let hrp = Hrp::parse("AGE-SECRET-KEY-PQ-").unwrap();
-        let encoded = bech32::encode::<bech32::Bech32>(hrp, self.seed.expose_secret())
-            .expect("Encoding failed");
+        let data5 = self.seed.expose_secret().to_base32();
+        let encoded = bech32::encode("AGE-SECRET-KEY-PQ-", data5, Variant::Bech32)
+            .expect("Bech32 encoding never fails with valid HRP + byte-derived data");
         SecretString::from(encoded.to_uppercase())
     }
 
@@ -312,22 +328,17 @@ impl AgeIdentity for HybridIdentity {
             return None;
         }
         let enc: Vec<u8>;
-        // Support both new official format (2 args: ["mlkem768x25519", base64(enc)])
-        // and legacy format (1 arg: [base64(enc)]) for backward compatibility with older age CLI files.
         if stanza.args.len() == 2 && stanza.args[0] == STANZA_TAG {
-            // New format: tag confirmed in args[0], enc in args[1]
             enc = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[1]) {
                 Ok(b) => b,
                 Err(_) => return None,
             };
         } else if stanza.args.len() == 1 {
-            // Legacy format: enc in args[0] (used in older PQ implementations)
             enc = match BASE64_STANDARD_NO_PAD.decode(&stanza.args[0]) {
                 Ok(b) => b,
                 Err(_) => return None,
             };
         } else {
-            // Invalid arg count
             return None;
         }
         let kem = MlKem768X25519;
@@ -379,19 +390,16 @@ pub(crate) mod tests {
     use age_core::format::FileKey;
     use age_core::secrecy::ExposeSecret;
     use proptest::prelude::*;
-
     use super::HybridRecipient;
 
     #[test]
     fn test_suite_id_matches_go() {
-        // From known HPKE suite or age-go test: "HPKE" + 0x647a_BE + 0x0001_BE + 0x0003_BE
         let expected = vec![0x48, 0x50, 0x4b, 0x45, 0x64, 0x7a, 0x00, 0x01, 0x00, 0x03];
-        // Compute suite_id using the same logic as the purged hpke_pq.rs
         let mut sid = Vec::with_capacity(10);
         sid.extend_from_slice(b"HPKE");
-        sid.extend_from_slice(&0x647au16.to_be_bytes()); // KEM_ID
-        sid.extend_from_slice(&0x0001u16.to_be_bytes()); // KDF_ID
-        sid.extend_from_slice(&0x0003u16.to_be_bytes()); // AEAD_ID
+        sid.extend_from_slice(&0x647au16.to_be_bytes());
+        sid.extend_from_slice(&0x0001u16.to_be_bytes());
+        sid.extend_from_slice(&0x0003u16.to_be_bytes());
         assert_eq!(sid, expected);
     }
 
@@ -400,18 +408,15 @@ pub(crate) mod tests {
         fn wrap_and_unwrap(file_key_bytes in proptest::collection::vec(any::<u8>(), 16..=16)) {
             let file_key = FileKey::new(Box::new(file_key_bytes.try_into().unwrap()));
             let (recipient, identity) = HybridRecipient::generate().unwrap();
-
             let res = recipient.wrap_file_key(&file_key);
             prop_assert!(res.is_ok());
             let (stanzas, labels) = res.unwrap();
             prop_assert!(labels.contains("postquantum"));
-
             let res = identity.unwrap_stanzas(&stanzas);
             prop_assert!(res.is_some());
             let res = res.unwrap();
             prop_assert!(res.is_ok());
             let unwrapped = res.unwrap();
-
             prop_assert_eq!(unwrapped.expose_secret(), file_key.expose_secret());
         }
     }

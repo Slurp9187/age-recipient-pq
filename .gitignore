@@ -6,3 +6,5 @@
 *.errors
 
 */target*Name clash*
+
+Cargo.lock
