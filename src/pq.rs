@@ -2,8 +2,7 @@ use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
 use age_core::secrecy::SecretString;
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
-use bech32::{Variant, ToBase32, FromBase32};
-
+use bech32::{self, Variant, ToBase32, FromBase32};
 use pq_xwing_hpke::kem::{Kem, MlKem768X25519};
 use pq_xwing_hpke::{aead::new_aead, kdf::new_kdf};
 use pq_xwing_hpke::{
@@ -66,7 +65,6 @@ impl HybridRecipient {
         ))
     }
 
-    // Official recipient format: bech32-encoded with HRP "age1pq" and data=pub_key
     /// Parses a hybrid recipient from its string representation.
     ///
     /// The expected format is a Bech32-encoded string with HRP "age1pq" and the public key as data.
@@ -87,16 +85,24 @@ impl HybridRecipient {
     /// let recipient = HybridRecipient::parse("age1pq1...").unwrap();
     /// ```
     pub fn parse(s: &str) -> Result<Self, age::EncryptError> {
-        if !s.starts_with("age1pq1") {
-            return Err(age::EncryptError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid recipient format",
-            )));
-        }
-        let base64_part = &s[7..];
-        let pub_key = BASE64_STANDARD_NO_PAD.decode(base64_part).map_err(|e| {
+        let (hrp, data5, variant) = bech32::decode(s).map_err(|e| {
             age::EncryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
+
+        if variant != Variant::Bech32 || hrp != "age1pq" {
+            return Err(age::EncryptError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid Bech32 variant or HRP: {} {:?}", hrp, variant),
+            )));
+        }
+
+        let pub_key = Vec::<u8>::from_base32(&data5).map_err(|_| {
+            age::EncryptError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid base32 data",
+            ))
+        })?;
+
         Ok(Self { pub_key })
     }
 
@@ -115,12 +121,9 @@ impl HybridRecipient {
     /// ```
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        // Raw bytes → 5-bit data
         let data5 = self.pub_key.to_base32();
-
-        // HRP = "age1pq" (lowercase, NO extra '1' — crate adds separator)
         bech32::encode("age1pq", data5, Variant::Bech32)
-            .expect("Bech32 encoding never fails here")
+            .expect("Bech32 encoding never fails with valid HRP + byte-derived data")
     }
 }
 
@@ -129,12 +132,7 @@ impl FromStr for HybridRecipient {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (hrp, data, _) = bech32::decode(s).map_err(|_| "failed to decode")?;
-        if hrp != "age1pq1" {
-            return Err("Invalid HRP");
-        }
-        let pub_key = Vec::<u8>::from_base32(&data).map_err(|_| "invalid base32 data")?;
-        Ok(Self { pub_key })
+        Self::parse(s).map_err(|_| "failed to parse HybridRecipient")
     }
 }
 
@@ -208,7 +206,6 @@ impl HybridIdentity {
     /// # Arguments
     ///
     /// * `s` - The string to parse.
-    /// Parses a string representation of a hybrid identity.
     ///
     /// # Errors
     ///
@@ -222,26 +219,25 @@ impl HybridIdentity {
     /// let identity = HybridIdentity::parse("AGE-SECRET-KEY-PQ-1...").unwrap();
     /// ```
     pub fn parse(s: &str) -> Result<Self, age::DecryptError> {
-        let (hrp, data, _) = bech32::decode(s).map_err(|e| {
+        let (hrp, data5, variant) = bech32::decode(s).map_err(|e| {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
 
-        // Case-insensitive comparison (decode may normalize to lowercase)
-        if hrp.to_ascii_lowercase() != "age-secret-key-pq-" {
+        if variant != Variant::Bech32 || hrp.to_ascii_lowercase() != "age-secret-key-pq-" {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid HRP: {}", hrp),
+                format!("Invalid HRP or variant: {} {:?}", hrp, variant),
             )));
         }
 
-        let data_u8: Vec<u8> = Vec::from_base32(&data).map_err(|_| {
+        let seed_bytes = Vec::<u8>::from_base32(&data5).map_err(|_| {
             age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "invalid base32 data",
             ))
         })?;
 
-        let seed: [u8; 32] = data_u8.try_into().map_err(|_| {
+        let seed: [u8; 32] = seed_bytes.try_into().map_err(|_| {
             age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Invalid seed length",
@@ -269,9 +265,9 @@ impl HybridIdentity {
     /// ```
     pub fn to_string(&self) -> SecretString {
         let data5 = self.seed.expose_secret().to_base32();
-        let encoded = bech32::encode("AGE-SECRET-KEY-PQ-", data5, Variant::Bech32)
+        let encoded = bech32::encode("age-secret-key-pq-", data5, Variant::Bech32)
             .expect("Bech32 encoding never fails with valid HRP + byte-derived data");
-        SecretString::from(encoded.to_uppercase())
+        SecretString::from(encoded.to_ascii_uppercase())
     }
 
     /// Derives the public recipient from this identity.
