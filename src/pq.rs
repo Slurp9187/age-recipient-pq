@@ -2,12 +2,10 @@ use age::{secrecy, Identity as AgeIdentity, Recipient as AgeRecipient};
 use age_core::format::{FileKey, Stanza};
 use age_core::secrecy::SecretString;
 use base64::prelude::{Engine as _, BASE64_STANDARD_NO_PAD};
-use bech32::{self, Variant, ToBase32, FromBase32};
+use bech32::{self, FromBase32, ToBase32, Variant};
+use pq_xwing_hpke::hpke::{new_sender, open};
 use pq_xwing_hpke::kem::{Kem, MlKem768X25519};
 use pq_xwing_hpke::{aead::new_aead, kdf::new_kdf};
-use pq_xwing_hpke::{
-    hpke::{new_sender, open},
-};
 use secrecy::{ExposeSecret, SecretBox};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -223,7 +221,7 @@ impl HybridIdentity {
             age::DecryptError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
 
-        if variant != Variant::Bech32 || hrp.to_ascii_lowercase() != "age-secret-key-pq-" {
+        if variant != Variant::Bech32 || !hrp.eq_ignore_ascii_case("AGE-SECRET-KEY-PQ-") {
             return Err(age::DecryptError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Invalid HRP or variant: {} {:?}", hrp, variant),
@@ -382,11 +380,11 @@ impl AgeIdentity for HybridIdentity {
 /// Tests for the post-quantum hybrid recipient and identity.
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::HybridRecipient;
     use age::{Identity, Recipient};
     use age_core::format::FileKey;
     use age_core::secrecy::ExposeSecret;
     use proptest::prelude::*;
-    use super::HybridRecipient;
 
     #[test]
     fn test_suite_id_matches_go() {
