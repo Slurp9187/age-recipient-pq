@@ -1,6 +1,6 @@
 [package]
 name = "age-recipient-pq"
-version = "0.1.0"
+version = "0.0.2"
 edition = "2021"
 description = "A Rust library providing post-quantum hybrid recipients and identities compatible with the age encryption format"
 license = "Apache-2.0 OR MIT"
@@ -12,7 +12,7 @@ unexpected_cfgs = { level = "allow", check-cfg = ['cfg(fuzzing)'] }
 [dependencies]
 age = "0.11"
 age-core = "0.11"
-pq-xwing-hpke = { git = "https://github.com/Slurp9187/pq-xwing-hpke" }
+pq-xwing-hpke = { git = "https://github.com/Slurp9187/pq-xwing-hpke", tag = "0.0.2" }
 base64 = "0.22"
 bech32 = "0.11"
 secrecy = "0.10"
